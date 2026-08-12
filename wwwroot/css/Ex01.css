@@ -1,0 +1,39 @@
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+.progressTrack {
+  flex: 0 0 240px; height: 6px; border-radius: 3px;
+  background: rgba(127,127,127,.2); overflow: hidden;
+}
+.progressBar {
+  height: 100%; width: 0; border-radius: 3px;
+  background: #3b82f6;
+  transition: width .12s linear;        /* ★就是這行在做進度回饋 */
+}
+.progressBar.indeterminate {
+  width: 30%; transition: none;
+  animation: progressSlide 1.1s ease-in-out infinite alternate;
+}
+@keyframes progressSlide { from { margin-left: 0; } to { margin-left: 70%; } }
+@media (prefers-reduced-motion: reduce) {
+  .progressBar { transition: none; }
+  .progressBar.indeterminate { animation: none; width: 100%; opacity: .45; }
+}
+
+.tabular-nums { font-variant-numeric: tabular-nums; }   /* 數字不因寬度變化而抖動 */
+button:disabled { cursor: not-allowed; opacity: .5; }
+
+/* 欄位平分容器寬度，永遠不需要橫向捲動；超寬內容改成欄內換行，不裁切也不撐開表格 */
+#dataTable {
+  table-layout: fixed;
+  width: 100%;
+}
+#dataTable th,
+#dataTable td {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: pre-wrap;   /* 保留儲存格內原有的換行與連續空格，不要被摺成一個空白 */
+}
+#dataTable th:first-child,
+#dataTable td:first-child {
+  width: 3em;   /* "#" 列號欄固定窄寬，其餘欄位平分剩下的寬度 */
+}

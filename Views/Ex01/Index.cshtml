@@ -1,0 +1,72 @@
+@{
+    ViewData["Title"] = "Excel 檔案檢視";
+}
+
+@section Styles {
+    <link rel="stylesheet" href="~/css/Ex01.css" asp-append-version="true" />
+}
+
+<div class="w3-container">
+    <p class="w3-text-grey">選擇 .xlsx 檔案即可在瀏覽器中直接檢視內容。</p>
+
+    <div id="unsupported" class="w3-text-red" style="white-space:pre-wrap" hidden></div>
+
+    <!-- 區塊一：選檔 -->
+    <div class="w3-card w3-margin-top w3-padding">
+        <h2>① 選擇檔案</h2>
+        <div class="row">
+            <input type="file" id="fileInput" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        </div>
+        <div id="cacheStatus" class="w3-margin-top w3-text-grey">尚未選擇檔案。</div>
+        <p class="w3-small w3-text-grey w3-margin-top">
+            檔案會先在您的瀏覽器內解析成資料列，再分批上傳並存進資料庫；上傳完成後，重新整理頁面也能繼續查看。
+        </p>
+    </div>
+
+    <!-- 區塊二：讀取 -->
+    <div class="w3-card w3-margin-top w3-padding">
+        <h2>② 讀取資料並上傳</h2>
+        <div class="row">
+            <button id="btnParse" type="button" class="w3-button w3-blue w3-round" disabled>開始讀取並上傳</button>
+        </div>
+        <div id="parseStatus" class="w3-margin-top w3-text-grey">請先選擇檔案。</div>
+        <div id="progressRow" class="row" hidden>
+            <div id="progressTrack" class="progressTrack" role="progressbar"
+                 aria-valuemin="0" aria-valuemax="100" aria-label="讀取進度">
+                <div id="progressBar" class="progressBar"></div>
+            </div>
+            <span id="progressText" class="w3-small w3-text-grey tabular-nums"></span>
+        </div>
+        <div id="uploadCountRow" class="row" hidden>
+            <span id="uploadCountText" class="w3-small w3-text-grey tabular-nums"></span>
+        </div>
+    </div>
+
+    <!-- 區塊三：分頁顯示 -->
+    <div class="w3-card w3-margin-top w3-padding">
+        <h2>③ 資料內容（每頁 <span id="pageSizeLabel"></span> 筆）</h2>
+        <div class="row">
+            <label class="w3-margin-right" for="datasetSelect">檢視資料集：</label>
+            <select id="datasetSelect" class="w3-select w3-border" style="width:auto; display:inline-block;"></select>
+        </div>
+        <div class="row w3-margin-top">
+            <button id="btnPrev" type="button" class="w3-button w3-light-grey w3-round" disabled>← 上一頁</button>
+            <span class="tabular-nums">第 <strong id="curPage">-</strong> / <strong id="totalPages">-</strong> 頁</span>
+            <button id="btnNext" type="button" class="w3-button w3-light-grey w3-round" disabled>下一頁 →</button>
+        </div>
+        <div id="pageStatus" class="w3-margin-top w3-text-grey">請先讀取檔案。</div>
+        <!-- 舊版：表格自己有捲動拉桿（若要改回這個效果，刪掉下一行、還原這行即可）
+        <div class="w3-responsive w3-margin-top" style="max-height:500px; overflow-y:auto; border:1px solid #ccc;">
+        -->
+        <div class="w3-responsive w3-margin-top" style="border:1px solid #ccc;">
+            <table id="dataTable" class="w3-table w3-striped w3-hoverable w3-bordered w3-white">
+                <thead id="dataHead" class="w3-light-grey" style="position:sticky; top:0;"></thead>
+                <tbody id="dataBody"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script type="module" src="~/Views/Ex01/Index.cshtml.js" asp-append-version="true"></script>
+}

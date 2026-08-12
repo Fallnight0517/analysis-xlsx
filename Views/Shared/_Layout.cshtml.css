@@ -1,0 +1,16 @@
+﻿/* Please see documentation at https://learn.microsoft.com/aspnet/core/client-side/bundling-and-minification
+for details on configuring this project to bundle and minify static web assets. */
+
+.border-top {
+  border-top: 1px solid #e5e5e5;
+}
+
+.box-shadow {
+  box-shadow: 0 .25rem .75rem rgba(0, 0, 0, .05);
+}
+
+/* 頁尾走一般文件流排在內容最下方，不用 position: absolute 釘在視窗底部——
+   釘在視窗底部在視窗較矮、內容較短時會蓋住內容（例如表格的橫向捲軸）。 */
+.footer {
+  line-height: 60px;
+}
