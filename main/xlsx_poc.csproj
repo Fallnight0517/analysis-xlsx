@@ -13,8 +13,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- PA0010.cs 是部門樣板，只供對照參考，不屬於本專案的命名空間/相依，不納入編譯。 -->
-    <Compile Remove="Views\Ex01\_reference\**\*.cs" />
+    <!-- 預存程序的建立腳本：版控用，不納入編譯、執行期也不讀檔。
+         做法比照公司既有專案，把 SQL 物件腳本放在獨立目錄版控。 -->
+    <None Include="SqlObject\**\*.sql" />
   </ItemGroup>
 
 </Project>

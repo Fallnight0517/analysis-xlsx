@@ -1,3 +1,17 @@
+# ===== 絕對不可外流 =====
+# 部門正式專案原始碼：只供本機對照慣例用
+/SUBSIDY/
+/tchse/
+# 主管提供的參考檔（本專案實際使用的副本在 main/DB/DBService.cs）
+/DBService.cs
+
+# ===== 只發布 README.md，其餘工作文件留在本機 =====
+/*.md
+!/README.md
+
+# 簡報
+*.pptx
+
 # 本機真實連線字串（appsettings.json 只放範本值，見 README「快速開始」）
 appsettings.Development.json
 

@@ -1,13 +1,21 @@
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-// AddNewtonsoftJson()：EX01.cs 沿用 PA0010.cs 的 JObject/JsonConvert 寫法，需要 Newtonsoft 的 MVC 整合。
+// AddNewtonsoftJson()：ApiController 是用 JsonConvert 手動序列化 ApiResult 回傳的
+// （照既有專案的寫法，見 ApiController），保留 Newtonsoft 的 MVC 整合讓輸入綁定也走同一套。
+// 註：公司既有專案其實沒有呼叫 AddNewtonsoftJson——它只有引用套件卻沒有掛上去，
+//     結果同一個專案裡混著 PascalCase 和 camelCase 兩種回應。這裡刻意不重現那個問題。
 builder.Services.AddControllersWithViews().AddNewtonsoftJson();
 
-var app = builder.Build();
+// 公司既有慣例的資料存取層。連線字串走「兩段間接」：DBProvider 決定連線型別、
+// ConnectionName 決定去 ConnectionStrings 拿哪一條（見 appsettings.json）。
+// 生命週期選 Scoped：DBService 讀完 IConfiguration 之後無狀態，Singleton 也可以，
+// 但 Scoped 是 ASP.NET Core 資料存取的預設選擇，風險最低。
+// （既有專案是每次自己 new 一個資料存取物件、完全不走 DI；但 DBService.cs 的建構子
+//   吃 IConfiguration、介面叫 IDBService，這個檔案本身就是為 DI 設計的。）
+builder.Services.AddScoped<xlsx_poc.DB.IDBService, xlsx_poc.DB.DBService>();
 
-// 本地無 SSO/無密管：連線字串明碼放在 appsettings.json，開發階段夠用（見 §2 SSMS 設定）。
-xlsx_poc.Utility.MSDA.Init(builder.Configuration.GetConnectionString("Ex01Db") ?? string.Empty);
+var app = builder.Build();
 
 // Configure the HTTP request pipeline.
 if (!app.Environment.IsDevelopment())

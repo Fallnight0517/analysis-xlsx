@@ -1,6 +1,6 @@
 'use strict';
 
-import { CapiAsync, Message } from '/js/Ex01/dispatch-client.js';
+import { CapiDb, Table, Message } from '/js/Ex01/dispatch-client.js';
 
 const PAGE_SIZE = 10;
 
@@ -199,18 +199,23 @@ function createUploadQueue(onDone, onError, onChunkUploaded) {
 }
 
 async function uploadChunk(chunk) {
-  const response = await CapiAsync('/api/ApiWork', 'EX01_SAVE', {
+  // 寫入走 UpdateData（既有專案把讀與寫分成兩個 action）。
+  // ObjParams 的值全部都要是字串：布林送 '1' / '0'，數字自己 String() 轉。
+  // ★Lines 是「一整批 500 列」序列化成一個字串——這就是 round-trip 從 500 降到 1 的關鍵。
+  //   chunk.lines 本身是字串陣列（parser-worker.js:66 已經 JSON.stringify 過每一列），
+  //   所以這裡再 stringify 一次是第二層編碼，SP 端用兩層 OPENJSON 拆回來。
+  const response = await CapiDb('/api/UpdateData', 'EX01_SAVE', {
     DatasetId: chunk.datasetId,
     FileName: chunk.fileName,
-    HasHeader: HAS_HEADER_ROW,
-    ColumnCount: chunk.columnCount || 0,
-    StartLine: chunk.startLine,
-    Lines: chunk.lines,
-    IsFirst: chunk.isFirst,
-    IsLast: chunk.isLast,
+    HasHeader: HAS_HEADER_ROW ? '1' : '0',
+    ColumnCount: String(chunk.columnCount || 0),
+    StartLine: String(chunk.startLine),
+    Lines: JSON.stringify(chunk.lines),
+    IsFirst: chunk.isFirst ? '1' : '0',
+    IsLast: chunk.isLast ? '1' : '0',
   });
-  if (!response.success) {
-    throw new Error(response.message || 'EX01_SAVE 失敗');
+  if (response.Code !== '1') {
+    throw new Error(response.Message || 'EX01_SAVE 失敗');
   }
 }
 
@@ -324,12 +329,16 @@ el.btnParse.addEventListener('click', onParseClick);
 // ==================== 區塊三：資料集清單 + 分頁顯示（改向後端查詢） ====================
 
 async function refreshDatasetList(selectId) {
-  const response = await CapiAsync('/api/ApiWork', 'EX01_LIST');
+  const response = await CapiDb('/api/GetData', 'EX01_LIST');
 
   el.datasetSelect.replaceChildren();
-  if (!response.success) return;
+  if (response.Code !== '1') {
+    Message(response.Message || 'EX01_LIST 失敗');
+    return;
+  }
 
-  const list = JSON.parse(response.data);
+  // 查無資料不再是錯誤（SP 一律回 Code=1 加一個空結果集），這裡自然會得到一個空的下拉選單。
+  const list = Table(response);
   for (const row of list) {
     const opt = document.createElement('option');
     opt.value = row.DatasetId;
@@ -340,13 +349,35 @@ async function refreshDatasetList(selectId) {
 }
 
 async function fetchPage(datasetId, page, wantHeader) {
-  const response = await CapiAsync('/api/ApiWork', 'EX01_PAGE', {
-    DatasetId: datasetId, Page: page, PageSize: PAGE_SIZE, WantHeader: wantHeader,
+  // ObjParams 的值全部都要是字串（後端是 Dictionary<string, string>）：
+  // 數字自己 String() 轉，布林一律送 '1' / '0'——送 'true' 的話 SP 端 CAST 成 BIT 會直接炸。
+  const response = await CapiDb('/api/GetData', 'EX01_PAGE', {
+    DatasetId: datasetId,
+    Page: String(page),
+    PageSize: String(PAGE_SIZE),
+    WantHeader: wantHeader ? '1' : '0',
   });
-  if (!response.success) {
-    throw new Error(response.message || 'EX01_PAGE 失敗');
+  if (response.Code !== '1') {
+    throw new Error(response.Message || 'EX01_PAGE 失敗');
   }
-  return JSON.parse(response.data);
+
+  // SP 固定回三個結果集：0=中介資料、1=表頭（可能 0 列）、2=本頁資料列。
+  const meta = Table(response)[0];
+  const headerRow = Table(response, 1)[0];
+
+  // totalPages 的除法留在前端算（既有專案的分頁數學一律在前端，SP 只回原始筆數）。
+  const totalRows = meta.TotalRows;
+  const totalPages = Math.max(1, Math.ceil(totalRows / PAGE_SIZE));
+
+  // 回傳形狀刻意跟舊版一模一樣，renderPage 那邊一行都不用改。
+  return {
+    columnCount: meta.ColumnCount,
+    header: headerRow ? JSON.parse(headerRow.RowJson) : null,
+    rows: Table(response, 2).map((r) => JSON.parse(r.RowJson)),
+    totalRows,
+    totalPages,
+    page: meta.Page,
+  };
 }
 
 const formatCell = (v) => (v === null || v === undefined ? '' : String(v));

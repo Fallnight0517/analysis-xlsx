@@ -8,10 +8,10 @@ ASP.NET Core（net10.0）同時擔任網站主機與一套**自建的最小 disp
   在 Web Worker 裡邊解壓邊掃，不需要把整份檔案讀進記憶體。
 - **資料持久化在 MSSQL**：解析出來的每一列分批（chunk）上傳、寫進資料庫；
   重新整理頁面、換一台瀏覽器都還能繼續看到之前上傳過的資料。
-- **後端是刻意精簡的自建 dispatch**，不是完整的部門框架：單一入口
-  `/api/ApiWork` 依 `FUNCTION_ID` 分派給對應邏輯，形狀比照常見的企業內部
-  dispatch 慣例（單一 controller、`Class/`＋`Utility/` 分層），但拿掉了本專案
-  用不到的東西（SSO 登入、連線字串加密、集中式操作記錄）。
+- **C# 不寫 SQL**：`FunctionID` 直接對應預存程序名稱，參數統一包成一個 `@params`
+  JSON 字串由 SP 端用 `OPENJSON` 自己拆，回傳統一是 `ApiResult{Code, Message, Data}`。
+  Controller 不認識任何一支 `FunctionID`，收到什麼就原封不動轉交——
+  新增功能只要加一支 SP，C# 一行都不用改。
 
 ## 架構總覽
 
@@ -20,20 +20,140 @@ ASP.NET Core（net10.0）同時擔任網站主機與一套**自建的最小 disp
 ├─ Views/Ex01/Index.cshtml(.js)      頁面骨架與 UI 邏輯（選檔、上傳進度、分頁顯示）
 ├─ wwwroot/js/Ex01/parser-worker.js  Web Worker：只做解析，把列資料分塊丟回主執行緒
 ├─ wwwroot/js/Ex01/xlsx-reader.js    自寫的 .xlsx 解析器（零第三方相依，見下方章節）
-└─ wwwroot/js/Ex01/dispatch-client.js  前端 dispatch client（Capi / CapiAsync / Message）
-        │  fetch POST /api/ApiWork { FUNCTION_ID, Data }
+└─ wwwroot/js/Ex01/dispatch-client.js  前端 dispatch client（CapiDb / Table / Message）
+        │  fetch POST /api/GetData    { FunctionID, ObjParams }   讀
+        │  fetch POST /api/UpdateData { FunctionID, ObjParams }   寫
         ▼
-Controllers/ApiController.cs        唯一入口，依 FUNCTION_ID 分派
+Controllers/ApiController.cs        通用 dispatch，不認識任何 FunctionID
         │
         ▼
-Class/EX01.cs                       EX01_SAVE ／ EX01_LIST ／ EX01_PAGE
+DB/DBService.cs                     ObjParams → 一包 JSON @params，
+                                    CommandText = FunctionID，回 ApiResult
         │
         ▼
-Utility/MSDA.cs、MSSqlWork.cs、BaseUtility.cs   精簡版資料存取／SQL 組裝／記錄
+MSSQL 預存程序                       EX01_LIST ／ EX01_PAGE ／ EX01_SAVE
+  （建立腳本在 SqlObject/Procedure/，版控用，執行期不讀檔）
         │
         ▼
 MSSQL：Ex01Dataset、Ex01Row 兩張表
 ```
+
+`DB/` 底下的四個檔案就是整個資料存取層：
+
+| 檔案 | 角色 |
+|---|---|
+| `DB/ObjRequest.cs` | 進入 action 的信封：`FunctionID` + `Dictionary<string,string> ObjParams` |
+| `DB/ApiResult.cs` | 離開 action 的信封：`Code` + `Message` + `DataSet Data` |
+| `DB/DBService.cs` | 唯一會碰到 `SqlConnection` 的地方 |
+| `DB/Query/SqlQueryRegistry.cs` | `ExecuteQuery` 路線用的登錄檔，目前是空的（本專案只走 `ExecuteProcedure`） |
+
+## 資料庫存取方式的遷移：改動前後
+
+早期版本的 SQL 是內嵌在 C# 字串裡、透過 static 的 `MSDA` 取得連線。
+後來整套改成「`FunctionID` → 預存程序」的慣例，以下是檔案結構的前後對照。
+
+### 改動前
+
+```
+xlsx_poc/
+├─ Class/
+│  └─ EX01.cs                      ★ SQL 字串內嵌在這裡（283 行）
+├─ Controllers/
+│  ├─ ApiController.cs             單一入口 /api/ApiWork，switch (FUNCTION_ID) 手寫分派
+│  ├─ Ex01Controller.cs
+│  └─ HomeController.cs
+├─ Models/
+│  └─ ErrorViewModel.cs
+├─ Properties/
+│  └─ launchSettings.json
+├─ Utility/
+│  ├─ BaseUtility.cs               WriteLog／SY006（操作記錄，no-op）
+│  ├─ MSDA.cs                      ★ static 連線 + ExecuteNonQuery／GetDataTable
+│  └─ MSSqlWork.cs                 ★ 動態組 WHERE 用
+├─ Views/
+│  ├─ Ex01/{Index.cshtml, Index.cshtml.js}
+│  ├─ Shared/...
+│  └─ {_ViewImports, _ViewStart}.cshtml
+├─ wwwroot/
+│  ├─ css/, favicon.ico, lib/
+│  └─ js/Ex01/
+│     ├─ dispatch-client.js        Capi／CapiAsync（{success, message, data} 信封）
+│     ├─ parser-worker.js
+│     └─ xlsx-reader.js
+├─ appsettings.json                只有 ConnectionStrings
+├─ Program.cs                      MSDA.Init(連線字串)
+└─ xlsx_poc.csproj
+```
+
+### 改動後
+
+```
+xlsx_poc/
+├─ Controllers/
+│  ├─ ApiController.cs             ◆ 改：/api/GetData + /api/UpdateData，沒有 switch
+│  ├─ Ex01Controller.cs
+│  └─ HomeController.cs
+├─ DB/                             ✚ 新增：整個資料存取層
+│  ├─ ApiResult.cs                 ✚ 回應信封 {Code, Message, Data}
+│  ├─ DBService.cs                 ✚ 唯一碰 SqlConnection 的地方（主管提供，只改 namespace 一行）
+│  ├─ ObjRequest.cs                ✚ 請求信封 {FunctionID, ObjParams}
+│  └─ Query/
+│     └─ SqlQueryRegistry.cs       ✚ 空登錄檔（只為了讓 DBService.cs 不用改就能編譯）
+├─ Models/
+│  └─ ErrorViewModel.cs
+├─ Properties/
+│  └─ launchSettings.json
+├─ SqlObject/                      ✚ 新增：SQL 物件腳本（版控用，執行期不讀檔）
+│  └─ Procedure/
+│     ├─ dbo.EX01_LIST.StoredProcedure.sql
+│     ├─ dbo.EX01_PAGE.StoredProcedure.sql
+│     └─ dbo.EX01_SAVE.StoredProcedure.sql
+├─ Utility/
+│  └─ BaseUtility.cs               ◆ 改：暫無呼叫者，保留當作「操作記錄該放哪一層」的標記
+├─ Views/
+│  ├─ Ex01/
+│  │  ├─ Index.cshtml
+│  │  └─ Index.cshtml.js           ◆ 改：三個呼叫點改用新信封
+│  ├─ Shared/...
+│  └─ {_ViewImports, _ViewStart}.cshtml
+├─ wwwroot/
+│  ├─ css/, favicon.ico, lib/
+│  └─ js/Ex01/
+│     ├─ dispatch-client.js        ◆ 改：CapiDb／Table（{Code, Message, Data} 信封）
+│     ├─ parser-worker.js          ── 完全未改動
+│     └─ xlsx-reader.js            ── 完全未改動
+├─ appsettings.json                ◆ 改：加 DBProvider + ConnectionName
+├─ Program.cs                      ◆ 改：MSDA.Init → AddScoped<IDBService, DBService>
+└─ xlsx_poc.csproj                 ◆ 改：把 SqlObject/**/*.sql 納入版控清單
+
+✘ 已刪除：Class/EX01.cs、Utility/MSDA.cs、Utility/MSSqlWork.cs
+```
+
+### 逐檔對照
+
+| 檔案 | 變化 | 行數 | 說明 |
+| --- | --- | --- | --- |
+| `Class/EX01.cs` | ✘ 刪除 | 283 → 0 | SQL 全搬進預存程序；Controller 與資料存取層之間不需要中間層 |
+| `Utility/MSDA.cs` | ✘ 刪除 | 64 → 0 | 連線改由 DI 提供給 `DBService` |
+| `Utility/MSSqlWork.cs` | ✘ 刪除 | 10 → 0 | 動態組 WHERE 用不到了（其實在改動前就已經沒有呼叫者） |
+| `DB/DBService.cs` | ✚ 新增 | 254 | 主管提供的檔案，**只改 namespace 那一行** |
+| `DB/ObjRequest.cs` | ✚ 新增 | 25 | |
+| `DB/ApiResult.cs` | ✚ 新增 | 47 | |
+| `DB/Query/SqlQueryRegistry.cs` | ✚ 新增 | 34 | 空登錄檔，見檔內註解 |
+| `SqlObject/Procedure/*.sql` | ✚ 新增 | 252（3 檔） | SQL 從 C# 搬到這裡 |
+| `Controllers/ApiController.cs` | ◆ 修改 | 42 → 61 | 拿掉 `switch`，換成兩個通用 dispatch action |
+| `Views/Ex01/Index.cshtml.js` | ◆ 修改 | 482 → 513 | 只動三個 API 呼叫點，渲染邏輯完全沒動 |
+| `wwwroot/js/Ex01/dispatch-client.js` | ◆ 修改 | 45 → 54 | 換信封 |
+| `Program.cs` | ◆ 修改 | 51 → 59 | DI 註冊取代 static 初始化 |
+| `appsettings.json` | ◆ 修改 | 12 → 14 | |
+| `Utility/BaseUtility.cs` | ◆ 修改 | 34 → 40 | 只加了說明為何保留的註解 |
+| `wwwroot/js/Ex01/xlsx-reader.js` | ── 未動 | 870 | **解析器完全不受影響** |
+| `wwwroot/js/Ex01/parser-worker.js` | ── 未動 | 90 | 同上 |
+| `Views/Ex01/Index.cshtml` | ── 未動 | 72 | 版面沒有變 |
+
+重點有兩個：**自寫的 xlsx 解析器（960 行）一個字都沒動**——這次改的是資料怎麼進資料庫，
+跟怎麼解析檔案無關；以及**C# 的資料存取程式碼淨減少**，357 行手寫的 SQL／連線管理
+換成 `DB/` 底下四個檔案，其中最大的那個（254 行）是既有的、一字未改。
 
 ## 執行需求
 
@@ -82,7 +202,24 @@ MSSQL：Ex01Dataset、Ex01Row 兩張表
 
    （LocalDB 通常是 `Server=(localdb)\MSSQLLocalDB;...`；預設 Express 通常是 `Server=.\SQLEXPRESS;...`。）
 
-4. 執行：
+4. **建立三支預存程序**（漏掉這步的話三個功能全部都不會動）：
+
+   ```bash
+   sqlcmd -S "你的執行個體" -d Ex01Db -E -C -f 65001 -i SqlObject/Procedure/dbo.EX01_LIST.StoredProcedure.sql
+   sqlcmd -S "你的執行個體" -d Ex01Db -E -C -f 65001 -i SqlObject/Procedure/dbo.EX01_PAGE.StoredProcedure.sql
+   sqlcmd -S "你的執行個體" -d Ex01Db -E -C -f 65001 -i SqlObject/Procedure/dbo.EX01_SAVE.StoredProcedure.sql
+   ```
+
+   （也可以直接用 SSMS 開這三個檔案執行。腳本是 `CREATE OR ALTER`，重跑不會出錯。）
+
+   `EX01_SAVE` 用到 `OPENJSON`，需要相容性層級 ≥ 130：
+
+   ```sql
+   SELECT compatibility_level FROM sys.databases WHERE name = 'Ex01Db';
+   -- 若小於 130：ALTER DATABASE Ex01Db SET COMPATIBILITY_LEVEL = 130;
+   ```
+
+5. 執行：
 
    ```bash
    dotnet run
@@ -102,15 +239,34 @@ MSSQL：Ex01Dataset、Ex01Row 兩張表
 
 ## 後端 API 契約
 
-單一入口 `POST /api/ApiWork`，body 為 `{ "FUNCTION_ID": "...", "Data": {...} }`，
-回應一律是 `{ "success": bool, "message": string, "data"?: string }`
-（`data` 是序列化過的 JSON 字串，需要再 `JSON.parse` 一次）。
+兩個入口，讀寫分開：**`POST /api/GetData`**（查詢）與 **`POST /api/UpdateData`**（寫入）。
+body 一律是 `{ "FunctionID": "...", "ObjParams": { ... } }`。
 
-| FUNCTION_ID | Data | 說明 |
-| --- | --- | --- |
-| `EX01_SAVE` | `{ DatasetId, FileName, HasHeader, ColumnCount, StartLine, Lines[], IsFirst, IsLast }` | 分塊上傳。`IsFirst` 時建立 `Ex01Dataset`；`IsLast` 時回填 `TotalRows`／`ColumnCount`（欄數要掃完全檔才知道）。 |
-| `EX01_LIST` | 無 | 列出目前使用者上傳過的資料集（本地無登入，固定用一個使用者代號）。 |
-| `EX01_PAGE` | `{ DatasetId, Page, PageSize, WantHeader }` | 回傳 `{ columnCount, header, rows, totalRows, totalPages, page }`；`WantHeader` 只需要在換資料集時傳 `true`。 |
+**`ObjParams` 的值必須全部是字串**（後端宣告是 `Dictionary<string, string>`）：
+布林送 `"1"` / `"0"`（送 `"true"` 會讓 SP 端 CAST 成 `BIT` 時直接失敗），
+數字自己轉字串，陣列 `JSON.stringify` 成一個字串。
+
+回應一律是：
+
+```json
+{ "Code": "1", "Message": "", "Data": { "Table": [...], "Table1": [...] } }
+```
+
+- `Code` 是**字串**：`"1"` 成功、`"99"` 業務失敗、`"-1"` 參數錯誤或例外
+- `Data` 是序列化後的 `DataSet`——**不是陣列**，是以資料表名稱為鍵的物件。
+  第一個結果集叫 `Table`（沒有數字後綴），第二個才是 `Table1`
+
+| FunctionID | 端點 | ObjParams | 回傳的結果集 |
+| --- | --- | --- | --- |
+| `EX01_LIST` | `GetData` | 無（`USER_ID` 由 Controller 注入） | `Table`＝資料集清單（查無資料時為空陣列，**不是錯誤**） |
+| `EX01_PAGE` | `GetData` | `{ DatasetId, Page, PageSize, WantHeader }` | **固定三個**：`Table`＝中介資料、`Table1`＝表頭（0 或 1 列）、`Table2`＝本頁資料列 |
+| `EX01_SAVE` | `UpdateData` | `{ DatasetId, FileName, HasHeader, ColumnCount, StartLine, Lines, IsFirst, IsLast }` | `Table`＝一列 `'success'` |
+
+`EX01_SAVE` 的 `Lines` 是**一整批列**序列化成的單一字串，SP 端用 `OPENJSON` 一句
+`INSERT ... SELECT` 寫完——**500 列只有 1 次 round-trip**，不是 500 次。
+
+`EX01_PAGE` 的三個結果集**數量固定不變**：不需要表頭時 `Table1` 仍然存在、只是 0 列。
+前端是按位置取結果集的，少一個 `SELECT` 會讓所有索引位移且不會報錯。
 
 ## 前端組成
 
@@ -119,10 +275,11 @@ MSSQL：Ex01Dataset、Ex01Row 兩張表
   回主執行緒，由主執行緒呼叫 `EX01_SAVE` 上傳——這樣設計是為了保留原本
   「邊解壓邊掃、記憶體不隨檔案大小成長」的串流特性，即使檔案很大，Worker
   也不需要等整份解析完才開始上傳。
-- **`dispatch-client.js`**：`Capi(para, cb)` 是 fetch 版的最小 dispatch client；
-  `CapiAsync(urlPage, functionId, data)` 是它的 Promise 封裝，呼叫端不用自己
-  重複寫 `new Promise(...)`。`Message(msg)` 目前只是 `alert()`，之後要換成
-  自訂彈窗只需要改這一個函式。
+- **`dispatch-client.js`**：`CapiDb(urlPage, functionId, objParams)` 是 fetch 版的
+  最小 dispatch client，回傳 `{ Code, Message, Data }`；連線層級的錯誤也會回一個
+  `Code: '-1'` 的信封而不是丟例外，讓呼叫端永遠只有一套判斷邏輯。
+  `Table(apiResult, n)` 取第 n 個結果集（沒有就回空陣列）。
+  `Message(msg)` 目前只是 `alert()`，之後要換成自訂彈窗只需要改這一個函式。
 - **`Index.cshtml.js`**：頁面邏輯——選檔、建立 Worker、上傳佇列（保證依序送出、
   跟解析速度脫鉤）、資料集下拉選單、分頁渲染。`PAGE_SIZE`（每頁筆數）與
   `HAS_HEADER_ROW`（NDJSON 第 0 列是否為標題列）是檔案最上方的常數。
@@ -211,6 +368,40 @@ MSSQL：Ex01Dataset、Ex01Row 兩張表
   處理，但沒有限制佇列長度；極大檔案在很慢的網路/資料庫下，佇列可能明顯
   落後於解析進度。
 - **`PAGE_SIZE` 固定在前端常數**，沒有做成使用者可調整的介面。
+
+### 資料存取層的已知限制
+
+以下幾點是照著 `DBService.cs` 的既有取捨抄過來的，**刻意不改**——
+目的是學既有的固定寫法，不是改良它：
+
+- **沒有跨呼叫的交易**。單次 `EX01_SAVE` 內部是原子的（交易寫在 SP 內），
+  但一個大檔要送十幾塊，**跨塊沒辦法包成一個交易**。傳到一半中斷會留下
+  未回填 `TotalRows` 的資料集——`TotalRows` 是否已回填就是「這份有沒有傳完」的標記。
+- **`CommandTimeout` 固定 30 秒**，沒有給批次寫入的逃生口。
+- **錯誤訊息不過濾**：SQL 的原始錯誤（含資料表名稱、條件約束名稱）會一路傳到瀏覽器。
+- **SP 設的 `@code` 在出錯時傳不回來**。以主鍵衝突為例：SQL 端完全正確
+  （`ROLLBACK` 會執行、`@code` 會設成 99），但嚴重性 ≥ 11 的錯誤同時也送到用戶端，
+  `SqlDataAdapter.Fill` 因此丟例外，`catch` 搶先回 `Code="-1"` 加原始訊息。
+  **資料完整性不受影響**，受影響的只有錯誤碼的品質。
+- **全同步，沒有 async**：`SqlDataAdapter` 本身就沒有 `FillAsync`，這是設計前提。
+- **回應的 `Content-Type` 沒有 `charset`**。瀏覽器不受影響（fetch 規範規定 JSON
+  一律以 UTF-8 解碼），但非瀏覽器的用戶端（PowerShell 等）會退回 ISO-8859-1、中文變亂碼。
+- **操作記錄目前是 no-op**（`Utility/BaseUtility.cs` 的 `SY006`）。
+  既有專案的做法是在閘道 SP 裡統一記錄，但 `DBService.cs` 沒有閘道，這一項待確認。
+- **`ObjParams` 是無型別的字串字典**：鍵名打錯不會有編譯錯誤，
+  SP 端只會拿到 NULL——這是「一個 action 服務 N 支 SP」換來的代價。
+
+### 預存程序
+
+三支 SP 的建立腳本在 `SqlObject/Procedure/`，**版控用，執行期不讀檔**
+（做法比照公司既有專案，把 SQL 物件腳本放在獨立目錄）。改了 SP 之後要自己在 SSMS 或
+`sqlcmd` 重跑腳本，不會隨著 `dotnet build` 自動套用。
+
+`OPENJSON` 需要資料庫相容性層級 **≥ 130**：
+
+```sql
+SELECT compatibility_level FROM sys.databases WHERE name = 'Ex01Db';
+```
 
 ## 授權
 
