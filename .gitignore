@@ -6,7 +6,7 @@
 /DBService.cs
 
 # ===== 只發布 README.md，其餘工作文件留在本機 =====
-/*.md
+/docs/
 !/README.md
 
 # 簡報

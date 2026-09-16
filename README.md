@@ -192,15 +192,26 @@ xlsx_poc/
    );
    ```
 
-3. 把 `appsettings.json` 裡的連線字串改成你自己的執行個體名稱：
+3. 在 `appsettings.json` 旁邊新增 `appsettings.Development.json`，填入你自己的執行個體名稱：
 
    ```json
-   "ConnectionStrings": {
-     "Ex01Db": "Server=YOUR_SERVER\\INSTANCE;Database=Ex01Db;Trusted_Connection=True;TrustServerCertificate=True;"
+   {
+     "ConnectionStrings": {
+       "Ex01Db": "Server=YOUR_SERVER\\INSTANCE;Database=Ex01Db;Trusted_Connection=True;TrustServerCertificate=True;"
+     }
    }
    ```
 
    （LocalDB 通常是 `Server=(localdb)\MSSQLLocalDB;...`；預設 Express 通常是 `Server=.\SQLEXPRESS;...`。）
+
+   **不要改 `appsettings.json` 裡的那條**——它是進版控的範本值，固定保持
+   `YOUR_SERVER\INSTANCE`。真實連線字串只放在 `appsettings.Development.json`，
+   該檔已列入 `.gitignore`，不會被提交。
+
+   兩者的關係是設定疊層：`Properties/launchSettings.json` 把
+   `ASPNETCORE_ENVIRONMENT` 設為 `Development`，所以開發時
+   `appsettings.Development.json` 會覆寫 `appsettings.json` 的同名鍵。
+   換句話說，開發時實際生效的一定是你剛建立的那一份。
 
 4. **建立三支預存程序**（漏掉這步的話三個功能全部都不會動）：
 
